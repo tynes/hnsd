@@ -46,12 +46,60 @@ hsk_hash_blake160(const uint8_t *data, size_t data_len, uint8_t *hash) {
 }
 
 void
+hsk_hash_blake256(const uint8_t *data, size_t data_len, uint8_t *hash) {
+  assert(hash != NULL);
+  hsk_blake2b_ctx ctx;
+  assert(hsk_blake2b_init(&ctx, 32) == 0);
+  hsk_blake2b_update(&ctx, data, data_len);
+  assert(hsk_blake2b_final(&ctx, hash, 32) == 0);
+}
+
+void
+hsk_hash_blake512(const uint8_t *data, size_t data_len, uint8_t *hash) {
+  assert(hash != NULL);
+  hsk_blake2b_ctx ctx;
+  assert(hsk_blake2b_init(&ctx, 64) == 0);
+  hsk_blake2b_update(&ctx, data, data_len);
+  assert(hsk_blake2b_final(&ctx, hash, 64) == 0);
+}
+
+void
+hsk_hash_blake256_init(hsk_blake2b_ctx *ctx) {
+  assert(hsk_blake2b_init(ctx, 32) == 0);
+}
+
+void
+hsk_hash_blake256_update(hsk_blake2b_ctx *ctx, uint8_t *data, size_t data_len) {
+  hsk_blake2b_update(ctx, data, data_len);
+}
+
+void
+hsk_hash_blake256_final(hsk_blake2b_ctx *ctx, uint8_t *hash) {
+  assert(hsk_blake2b_final(ctx, hash, 32) == 0);
+}
+
+void
 hsk_hash_sha3(const uint8_t *data, size_t data_len, uint8_t *hash) {
   assert(hash != NULL);
   hsk_sha3_ctx ctx;
   hsk_sha3_256_init(&ctx);
   hsk_sha3_update(&ctx, data, data_len);
   hsk_sha3_final(&ctx, hash);
+}
+
+void
+hsk_hash_sha3_init(hsk_sha3_ctx *ctx) {
+  hsk_sha3_256_init(ctx);
+}
+
+void
+hsk_hash_sha3_update(hsk_sha3_ctx *ctx, uint8_t *data, size_t data_len) {
+  hsk_sha3_update(ctx, data, data_len);
+}
+
+void
+hsk_hash_sha3_final(hsk_sha3_ctx *ctx, uint8_t *hash) {
+  hsk_sha3_final(ctx, hash);
 }
 
 void
