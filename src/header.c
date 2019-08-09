@@ -18,16 +18,17 @@ hsk_header_init(hsk_header_t *hdr) {
   if (!hdr)
     return;
 
-  hdr->version = 0;
-  memset(hdr->prev_block, 0, 32);
-  memset(hdr->merkle_root, 0, 32);
-  memset(hdr->witness_root, 0, 32);
-  memset(hdr->name_root, 0, 32);
-  memset(hdr->filter_root, 0, 32);
-  memset(hdr->reserved_root, 0, 32);
+  hdr->nonce = 0;
   hdr->time = 0;
+  memset(hdr->prev_block, 0, 32);
+  memset(hdr->name_root, 0, 32);
+  memset(hdr->extra_nonce, 0, 32);
+  memset(hdr->reserved_root, 0, 32);
+  memset(hdr->witness_root, 0, 32);
+  memset(hdr->merkle_root, 0, 32);
+  hdr->version = 0;
   hdr->bits = 0;
-  memset(hdr->nonce, 0, 32);
+  memset(hdr->mask, 0, 32);
 
   hdr->cache = false;
   memset(hdr->hash, 0, 32);
@@ -192,36 +193,40 @@ hsk_header_calc_work(hsk_header_t *hdr, const hsk_header_t *prev) {
   return true;
 }
 
+
 bool
 hsk_header_read(uint8_t **data, size_t *data_len, hsk_header_t *hdr) {
-  if (!read_u32(data, data_len, &hdr->version))
-    return false;
-
-  if (!read_bytes(data, data_len, hdr->prev_block, 32))
-    return false;
-
-  if (!read_bytes(data, data_len, hdr->merkle_root, 32))
-    return false;
-
-  if (!read_bytes(data, data_len, hdr->witness_root, 32))
-    return false;
-
-  if (!read_bytes(data, data_len, hdr->name_root, 32))
-    return false;
-
-  if (!read_bytes(data, data_len, hdr->filter_root, 32))
-    return false;
-
-  if (!read_bytes(data, data_len, hdr->reserved_root, 32))
+  if (!read_u32(data, data_len, &hdr->nonce))
     return false;
 
   if (!read_u64(data, data_len, &hdr->time))
     return false;
 
+  if (!read_bytes(data, data_len, hdr->prev_block, 32))
+    return false;
+
+  if (!read_bytes(data, data_len, hdr->name_root, 32))
+    return false;
+
+  if (!read_bytes(data, data_len, hdr->extra_nonce, 24))
+    return false;
+
+  if (!read_bytes(data, data_len, hdr->reserved_root, 32))
+    return false;
+
+  if (!read_bytes(data, data_len, hdr->witness_root, 32))
+    return false;
+
+  if (!read_bytes(data, data_len, hdr->merkle_root, 32))
+    return false;
+
+  if (!read_u32(data, data_len, &hdr->version))
+    return false;
+
   if (!read_u32(data, data_len, &hdr->bits))
     return false;
 
-  if (!read_bytes(data, data_len, hdr->nonce, 32))
+  if (!read_bytes(data, data_len, hdr->mask, 32))
     return false;
 
   return true;
@@ -235,17 +240,23 @@ hsk_header_decode(const uint8_t *data, size_t data_len, hsk_header_t *hdr) {
 int
 hsk_header_write(const hsk_header_t *hdr, uint8_t **data) {
   int s = 0;
-  s += write_u32(data, hdr->version);
-  s += write_bytes(data, hdr->prev_block, 32);
-  s += write_bytes(data, hdr->merkle_root, 32);
-  s += write_bytes(data, hdr->witness_root, 32);
-  s += write_bytes(data, hdr->name_root, 32);
-  s += write_bytes(data, hdr->filter_root, 32);
-  s += write_bytes(data, hdr->reserved_root, 32);
+  s += write_u32(data, hdr->nonce);
   s += write_u64(data, hdr->time);
+  s += write_bytes(data, hdr->prev_block, 32);
+  s += write_bytes(data, hdr->name_root, 32);
+  s += write_bytes(data, hdr->extra_nonce, 24);
+  s += write_bytes(data, hdr->reserved_root, 32);
+  s += write_bytes(data, hdr->witness_root, 32);
+  s += write_bytes(data, hdr->merkle_root, 32);
+  s += write_u32(data, hdr->version);
   s += write_u32(data, hdr->bits);
-  s += write_bytes(data, hdr->nonce, 32);
+  s += write_bytes(data, hdr->mask, 32);
   return s;
+}
+
+int
+hsk_header_encode(const hsk_header_t *hdr, uint8_t *data) {
+  return hsk_header_write(hdr, &data);
 }
 
 int
@@ -254,8 +265,99 @@ hsk_header_size(const hsk_header_t *hdr) {
 }
 
 int
-hsk_header_encode(const hsk_header_t *hdr, uint8_t *data) {
-  return hsk_header_write(hdr, &data);
+hsk_header_subheader_write(const hsk_header_t *hdr, uint8_t **data) {
+  int s = 0;
+  s += write_bytes(data, hdr->extra_nonce, 24);
+  s += write_bytes(data, hdr->reserved_root, 32);
+  s += write_bytes(data, hdr->witness_root, 32);
+  s += write_bytes(data, hdr->merkle_root, 32);
+  s += write_u32(data, hdr->version);
+  s += write_u32(data, hdr->bits);
+  return s;
+}
+
+int
+hsk_header_subheader_encode(const hsk_header_t *hdr, uint8_t *data) {
+  return hsk_header_subheader_write(hdr, &data);
+}
+
+int
+hsk_header_subheader_size(const hsk_header_t *hdr) {
+  return hsk_header_subheader_write(hdr, NULL);
+}
+
+void
+hsk_header_mask_hash(const hsk_header_t *hdr, uint8_t *hash) {
+  hsk_hash_blake2b_ctx ctx;
+  hsk_hash_blake256_init(&ctx);
+  hsk_hash_blake256_update(&ctx, (uint8_t *)hdr->prev_block, 32);
+  hsk_hash_blake256_update(&ctx, (uint8_t *)hdr->mask, 32);
+  hsk_hash_blake256_final(&ctx, hash);
+}
+
+void
+hsk_header_commit_hash(const hsk_header_t *hdr, uint8_t *hash) {
+  int size = hsk_header_subheader_size(hdr);
+  uint8_t raw[size];
+  hsk_header_subheader_encode(hdr, raw);
+
+  uint8_t sub_hash[32];
+  uint8_t mask_hash[32];
+
+  hsk_hash_blake256(raw, size, sub_hash);
+
+  // hsk_header_subheader_hash(hdr->sub, hash);
+
+  hsk_header_mask_hash(hdr, mask_hash);
+
+  hsk_hash_blake2b_ctx ctx;
+  hsk_hash_blake256_init(&ctx);
+  hsk_hash_blake256_update(&ctx, sub_hash, 32);
+  hsk_hash_blake256_update(&ctx, mask_hash, 32);
+  hsk_hash_blake256_final(&ctx, hash);
+}
+
+int
+hsk_header_padding_write(const hsk_header_t *hdr, uint8_t **data, size_t size) {
+    int s = 0;
+    for (uint32_t i = 0; i < size; i++)
+      s += write_u8(data, hdr->prev_block[i % 32] ^ hdr->name_root[i % 32]);
+    return s;
+}
+
+int
+hsk_header_padding(const hsk_header_t *hdr, uint8_t *data, size_t size) {
+  return hsk_header_padding_write(hdr, (uint8_t **)&data, size);
+}
+
+
+int
+hsk_header_preheader_write(const hsk_header_t *hdr, uint8_t **data) {
+  int s = 0;
+  uint8_t padding[20];
+  uint8_t commit_hash[32];
+
+  hsk_header_padding(hdr, padding, 20);
+  hsk_header_commit_hash(hdr, commit_hash);
+
+  s += write_u32(data, hdr->nonce);
+  s += write_u64(data, hdr->time);
+  s += write_bytes(data, padding, 20);
+  s += write_bytes(data, hdr->prev_block, 32);
+  s += write_bytes(data, hdr->name_root, 32);
+  s += write_bytes(data, hdr->mask, 32);
+  s += write_bytes(data, commit_hash, 32);
+  return s;
+}
+
+int
+hsk_header_preheader_encode(const hsk_header_t *hdr, uint8_t *data) {
+  return hsk_header_preheader_write(hdr, &data);
+}
+
+int
+hsk_header_preheader_size(const hsk_header_t *hdr) {
+  return hsk_header_preheader_write(hdr, NULL);
 }
 
 bool
@@ -283,6 +385,35 @@ hsk_header_hash(hsk_header_t *hdr, uint8_t *hash) {
   memcpy(hash, hsk_header_cache(hdr), 32);
 }
 
+void
+hsk_header_pow(const hsk_header_t *hdr, uint8_t *hash) {
+  int size = hsk_header_preheader_size(hdr);
+  uint8_t raw[size];
+  uint8_t pad8[8];
+  uint8_t pad32[32];
+  uint8_t left[32];
+  uint8_t right[32];
+
+  hsk_header_preheader_encode(hdr, raw);
+  hsk_header_padding(hdr, pad8, sizeof(pad8));
+  hsk_header_padding(hdr, pad32, sizeof(pad32));
+
+  hsk_hash_blake512(raw, sizeof(raw), left);
+
+  hsk_hash_sha3_ctx sha3_ctx;
+  hsk_hash_sha3_init(&sha3_ctx);
+  hsk_hash_sha3_update(&sha3_ctx, raw, sizeof(raw));
+  hsk_hash_sha3_update(&sha3_ctx, pad8, sizeof(pad8));
+  hsk_hash_sha3_final(&sha3_ctx, right);
+
+  hsk_hash_blake2b_ctx blake2b_ctx;
+  hsk_hash_blake256_init(&blake2b_ctx);
+  hsk_hash_blake256_update(&blake2b_ctx, left, sizeof(left));
+  hsk_hash_blake256_update(&blake2b_ctx, pad32, sizeof(pad32));
+  hsk_hash_blake256_update(&blake2b_ctx, right, sizeof(right));
+  hsk_hash_blake256_final(&blake2b_ctx, hash);
+}
+
 int
 hsk_header_verify_pow(const hsk_header_t *hdr) {
   uint8_t target[32];
@@ -290,13 +421,9 @@ hsk_header_verify_pow(const hsk_header_t *hdr) {
   if (!hsk_pow_to_target(hdr->bits, target))
     return HSK_ENEGTARGET;
 
-  size_t size = hsk_header_size(hdr);
-  uint8_t raw[size];
   uint8_t hash[32];
 
-  hsk_header_encode(hdr, raw);
-  hsk_hash_sha3_key(raw, size - 32, hdr->nonce, 32, hash);
-  hsk_hash_blake2b_key(raw, size - 32, hash, 32, hash);
+  hsk_header_pow(hdr, hash);
 
   if (memcmp(hash, target, 32) > 0)
     return HSK_EHIGHHASH;
@@ -314,9 +441,8 @@ hsk_header_print(hsk_header_t *hdr, const char *prefix) {
   char merkle_root[65];
   char witness_root[65];
   char name_root[65];
-  char filter_root[65];
+  char mask[65];
   char reserved_root[65];
-  char nonce[65];
 
   assert(hsk_hex_encode(hsk_header_cache(hdr), 32, hash));
   assert(hsk_hex_encode(hdr->work, 32, work));
@@ -324,9 +450,8 @@ hsk_header_print(hsk_header_t *hdr, const char *prefix) {
   assert(hsk_hex_encode(hdr->merkle_root, 32, merkle_root));
   assert(hsk_hex_encode(hdr->witness_root, 32, witness_root));
   assert(hsk_hex_encode(hdr->name_root, 32, name_root));
-  assert(hsk_hex_encode(hdr->filter_root, 32, filter_root));
+  assert(hsk_hex_encode(hdr->mask, 32, mask));
   assert(hsk_hex_encode(hdr->reserved_root, 32, reserved_root));
-  assert(hsk_hex_encode(hdr->nonce, 32, nonce));
 
   printf("%sheader\n", prefix);
   printf("%s  hash=%s\n", prefix, hash);
@@ -337,9 +462,8 @@ hsk_header_print(hsk_header_t *hdr, const char *prefix) {
   printf("%s  merkle_root=%s\n", prefix, merkle_root);
   printf("%s  witness_root=%s\n", prefix, witness_root);
   printf("%s  name_root=%s\n", prefix, name_root);
-  printf("%s  filter_root=%s\n", prefix, filter_root);
+  printf("%s  mask=%s\n", prefix, mask);
   printf("%s  reserved_root=%s\n", prefix, reserved_root);
   printf("%s  time=%u\n", prefix, (uint32_t)hdr->time);
   printf("%s  bits=%u\n", prefix, hdr->bits);
-  printf("%s  nonce=%s\n", prefix, nonce);
 }
